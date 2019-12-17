@@ -1,0 +1,8 @@
+CLASS obfuscated/v org/schema/common/util/StringTools
+	METHOD a wrapText (Ljava/lang/String;I)Ljava/lang/String;
+	METHOD a onOff (Z)Ljava/lang/String;
+	METHOD a formatArray ([S)Ljava/lang/String;
+	METHOD d formatDistance (F)Ljava/lang/String;
+	METHOD d formatTimeSpan (J)Ljava/lang/String;
+	METHOD e formatDistance (D)Ljava/lang/String;
+	METHOD g formatByteSize (J)Ljava/lang/String;

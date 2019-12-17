@@ -1,0 +1,649 @@
+buildscript {
+	repositories {
+		jcenter()
+		maven {
+			name "Fabric Repository"
+			url 'https://maven.fabricmc.net'
+		}
+		mavenLocal()
+	}
+	dependencies {
+		classpath "cuchaz:enigma:0.14.1.130"
+		classpath "net.fabricmc:stitch:0.2.1.61"
+		classpath "commons-io:commons-io:2.6"
+		classpath "com.google.guava:guava:28.0-jre"
+		classpath 'de.undercouch:gradle-download-task:4.0.0'
+		classpath 'net.fabricmc:tiny-remapper:+'
+	}
+}
+
+plugins {
+	id 'de.undercouch.download' version '4.0.0'
+	id 'maven'
+	id 'maven-publish'
+}
+
+logger.lifecycle(": Targeting StarMade $project.starMadeVersion")
+
+def ENV = System.getenv()
+// Fetch build number from Jenkins
+def build_number = ENV.BUILD_NUMBER ?: "local"
+
+def yarnVersion = "${project.starMadeVersion}.$build_number"
+
+
+repositories {
+	mavenCentral()
+	maven {
+		name "Fabric Repository"
+		url 'https://maven.fabricmc.net'
+	}
+}
+
+configurations {
+	enigmaRuntime {
+		resolutionStrategy {
+			cacheDynamicVersionsFor 0, "seconds"
+			cacheChangingModulesFor 0, "seconds"
+		}
+	}
+}
+
+dependencies {
+	enigmaRuntime "net.fabricmc:stitch:0.2.1.61"
+	enigmaRuntime "cuchaz:enigma:0.14.1.130:all"
+}
+
+def setupGroup = "jar setup"
+def yarnGroup = "yarn"
+def buildMappingGroup = "mapping build"
+def mapJarGroup = "jar mapping"
+def mappingsDir = file("mappings")
+def mappingsExportOfficialDir = file("mappings_official")
+def cacheFilesStarMade = file(".gradle/starmade")
+def tempDir = file(".gradle/temp")
+def intermediaryJar = file("${project.starMadeVersion}-intermediary.jar")
+def yarnJar = file("${project.starMadeVersion}-yarn.jar")
+def namedJar = file("${project.starMadeVersion}-named.jar")
+def checksumsFile = new File(cacheFilesStarMade, "${project.starMadeVersion}_checksums.lst")
+def gameJar = new File(cacheFilesStarMade, "${project.starMadeVersion}.jar")
+def libraries = new File(cacheFilesStarMade, "libraries")
+def libs = new File("build/libs/")
+
+ext.baseUrl = new URL("http://files.star-made.org/")
+
+import cuchaz.enigma.command.CheckMappingsCommand
+import cuchaz.enigma.command.ComposeMappingsCommand
+import cuchaz.enigma.command.ConvertMappingsCommand
+import com.google.common.hash.Hashing
+import com.google.common.io.Files
+import com.google.common.net.UrlEscapers
+import groovy.io.FileType
+import groovy.json.JsonSlurper
+import net.fabricmc.stitch.commands.CommandMergeTiny
+import net.fabricmc.stitch.commands.CommandProposeFieldNames
+import net.fabricmc.stitch.commands.CommandReorderTiny
+import net.fabricmc.stitch.commands.CommandRewriteIntermediary
+import net.fabricmc.stitch.merge.JarMerger
+import net.fabricmc.tinyremapper.OutputConsumerPath
+import net.fabricmc.tinyremapper.TinyRemapper
+import net.fabricmc.tinyremapper.TinyUtils
+import org.apache.commons.io.FileUtils
+import java.nio.charset.StandardCharsets
+import java.util.zip.GZIPOutputStream
+import java.util.stream.Collectors
+
+boolean validateChecksum(File file, String checksum) {
+	if (file != null) {
+		def hash = Files.asByteSource(file).hash(Hashing.sha1())
+		def builder = new StringBuilder()
+		hash.asBytes().each {
+			builder.append(Integer.toString((it & 0xFF) + 0x100, 16).substring(1))
+		}
+		return builder.toString().equals(checksum)
+	}
+	return false
+}
+
+task downloadVersionsManifest(type: Download) {
+	group = setupGroup
+	inputs.property "date", java.time.LocalDate.now()
+
+	def manifestFile = new File(cacheFilesStarMade, "release_version_manifest.lst")
+
+	src new URL(baseUrl, "/releasebuildindex")
+	dest manifestFile
+	onlyIfModified true
+}
+
+def getManifestVersion(File manifestFile, String starmade_version) {
+	if (!manifestFile.exists()) {
+		logger.info("! manifestFile ($manifestFile) does not exist")
+		return java.util.Optional.empty()
+	}
+
+	def manifest = FileUtils.readLines(manifestFile, "UTF-8")
+	def builds = manifest.stream()
+		.filter { it.startsWith("$starmade_version#") }
+		.map { it.tokenize(' ') }
+		.collect Collectors.toList()
+
+	if (builds.isEmpty()) {
+		logger.info("! No builds were availble for version $starmade_version")
+		return java.util.Optional.empty()
+	}
+
+	def tokens = builds.last()
+	def build_id = tokens[0].split('#')
+	return java.util.Optional.of([
+			version: build_id[0],
+			build: build_id[1],
+			path: tokens[1],
+			checksums: new URL(baseUrl, "${tokens[1]}/checksums")
+		])
+}
+
+task downloadWantedVersionManifest(dependsOn: downloadVersionsManifest) {
+	group = setupGroup
+	def manifestFile = downloadVersionsManifest.dest
+
+	outputs.file checksumsFile
+
+	doLast {
+		def manifestVersion = getManifestVersion(manifestFile, project.starMadeVersion)
+
+		if (manifestVersion.isPresent()) {
+			download {
+				src manifestVersion.get().checksums
+				dest checksumsFile
+				onlyIfModified true
+			}
+		} else {
+			throw new RuntimeException("No version data for StarMade version ${project.starMadeVersion}")
+		}
+	}
+
+}
+
+task downloadStarMadeJars(dependsOn: downloadWantedVersionManifest) {
+	group = setupGroup
+	def manifestFile = downloadVersionsManifest.dest
+
+	inputs.file checksumsFile
+
+	outputs.file gameJar
+
+	outputs.upToDateWhen {
+		def version = FileUtils.readLines(checksumsFile, "UTF-8")
+		def sha1 = version.stream().findResult { it.startsWith("./StarMade.jar ") ? it : null }.tokenize(" ")[2]
+		return gameJar.exists() && validateChecksum(gameJar, sha1)
+	}
+
+	doLast {
+		def manifestVersion = getManifestVersion(manifestFile, project.starMadeVersion)
+
+		if (!checksumsFile.exists()) {
+			throw new RuntimeException("Can't download the jars without the ${checksumsFile.name} file!")
+		}
+
+		//reload in case it changed
+		def version = FileUtils.readLines(checksumsFile)
+		def sha1 = version.stream().findResult({it.startsWith("./StarMade.jar ") ? it : null}).tokenize(" ")[2]
+
+		download {
+			logger.lifecycle(": Downloading StarMade.jar ($sha1)")
+
+			src new URL(baseUrl, "${manifestVersion.get().path}/StarMade.jar")
+			dest gameJar
+		}
+	}
+}
+
+task downloadIntermediary(type: Download){
+	group = buildMappingGroup
+	def url = "https://github.com/DistortSM/intermediary/raw/master/mappings/${project.starMadeVersion}.tiny"
+	src UrlEscapers.urlFragmentEscaper().escape(url)
+	dest new File(cacheFilesStarMade, "${project.starMadeVersion}-intermediary.tiny")
+}
+
+task downloadStarMadeLibs(dependsOn: downloadWantedVersionManifest) {
+	group = setupGroup
+	def manifestFile = downloadVersionsManifest.dest
+
+	inputs.files checksumsFile
+
+	outputs.dir(libraries)
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		def manifestVersion = getManifestVersion(manifestFile, project.starMadeVersion)
+		if (!checksumsFile.exists()) {
+			throw new RuntimeException("Can't download the jars without the ${checksumsFile.name} file!")
+		}
+
+		def version = FileUtils.readLines(checksumsFile)
+		def build_url = new URL(baseUrl, manifestVersion.get().path)
+
+		logger.lifecycle(": Downloading StarMade libraries")
+
+		if (!libraries.exists()) {
+			libraries.mkdirs()
+		}
+
+		def libraryUrls = version.stream()
+			.map { new URL(build_url, "${build_url.getPath()}/${it.tokenize(" ")[0]}").toString() }
+			.filter { it.endsWith(".jar") && !it.endsWith("./StarMade.jar") }
+			.collect Collectors.toList()
+
+		// Delete libaries with mismatched checksums
+		version.stream()
+			.map { it.tokenize(" ") }
+			.filter { it[0].endsWith(".jar") && !it[0].equals("./StarMade.jar") }
+			.each {
+				def library = new File(libraries, it[0].substring(it[0].lastIndexOf("/") + 1))
+				def libraryChecksum = it[2]
+				try {
+					verifyChecksum {
+						src library
+						algorithm "sha1"
+						checksum libraryChecksum
+					}
+
+				}
+				catch (GradleException ex) {
+					library.delete()
+				}
+			}
+
+		// Downlaod any missing libaries
+		download {
+			src libraryUrls
+			dest libraries
+			overwrite false
+		}
+
+		logger.lifecycle(": Verifying StarMade library checksums")
+
+		// Verify the library's checksums
+		version.stream()
+			.map { it.tokenize(" ") }
+			.filter { it[0].endsWith(".jar") && !it[0].equals("./StarMade.jar") }
+			.each {
+				def library = new File(libraries, it[0].substring(it[0].lastIndexOf("/") + 1))
+				def libraryChecksum = it[2]
+
+				verifyChecksum {
+					src library
+					algorithm "sha1"
+					checksum libraryChecksum
+				}
+			}
+	}
+}
+
+task invertIntermediary(dependsOn: ["downloadIntermediary"], type: FileOutput) {
+	group = buildMappingGroup
+	def inputFile = downloadIntermediary.dest
+
+	def outputFile = new File(cacheFilesStarMade, "${project.starMadeVersion}-intermediary-inverted.tiny")
+	outputs.file(outputFile)
+	fileOutput = outputFile
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":building inverted intermediary")
+		String[] args = [
+			inputFile.getAbsolutePath(),
+			outputFile.getAbsolutePath(),
+			"intermediary", "official"
+		]
+
+		new CommandReorderTiny().run(args)
+	}
+}
+
+task patchIntermediary(dependsOn: ["downloadStarMadeJars", "downloadIntermediary"], type: FileOutput) {
+	group = buildMappingGroup
+	def intermediaryTinyInput = downloadIntermediary.dest
+
+	def outputFile = new File(cacheFilesStarMade, "${project.starMadeVersion}-intermediary-full.tiny")
+	outputs.file(outputFile)
+	fileOutput = outputFile
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":patching intermediary")
+		String[] args = [
+			gameJar.getAbsolutePath(),
+			intermediaryTinyInput.getAbsolutePath(),
+			outputFile.getAbsolutePath(),
+			"--writeAll"
+		]
+
+		new CommandRewriteIntermediary().run(args)
+	}
+}
+
+task mapIntermediaryJar(dependsOn: [downloadStarMadeLibs, downloadIntermediary, downloadStarMadeJars]) {
+	group = mapJarGroup
+	inputs.files downloadStarMadeLibs.outputs.files.files
+	outputs.file(intermediaryJar)
+
+	//Force the task to always run
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":mapping starmade to intermediary")
+		def tinyInput = new File(cacheFilesStarMade, "${project.starMadeVersion}-intermediary.tiny")
+		mapJar(intermediaryJar, gameJar, tinyInput, libraries, "official", "intermediary")
+	}
+}
+
+task setupYarn(dependsOn: mapIntermediaryJar) {
+	group = yarnGroup
+}
+
+task yarn(dependsOn: setupYarn) {
+	group = yarnGroup
+	doLast {
+		ant.setLifecycleLogLevel "WARN"
+		ant.java(
+			classname: 'cuchaz.enigma.Main',
+			classpath: configurations.enigmaRuntime.asPath,
+			fork: true,
+			spawn: true
+		) {
+			jvmarg(value: "-Xmx2048m")
+			arg(value: '-jar')
+			arg(value: intermediaryJar.getAbsolutePath())
+			arg(value: '-mappings')
+			arg(value: mappingsDir.getAbsolutePath())
+			arg(value: '-profile')
+			arg(value: 'enigma_profile.json')
+		}
+	}
+}
+
+// task buildEnigma(type: Zip) {
+// 	group = buildMappingGroup
+// 	from mappingsDir
+// 	include "**/*"
+// 	archiveName "yarn-enigma-${yarnVersion}.zip"
+// 	destinationDir(file("build/libs"))
+// }
+
+task checkMappings {
+	group = buildMappingGroup
+	inputs.dir mappingsDir
+	doLast {
+		logger.lifecycle(":checking mappings")
+
+		String[] args = [
+			gameJar.getAbsolutePath(),
+			mappingsDir.getAbsolutePath()
+		]
+
+		new CheckMappingsCommand().run(args)
+	}
+}
+
+task buildYarnTiny(dependsOn: "downloadStarMadeJars", type: FileOutput) {
+	group = buildMappingGroup
+	inputs.dir mappingsDir
+	if (!libs.exists()) {
+		libs.mkdirs()
+	}
+
+	def yarnTiny = new File(tempDir, "yarn-mappings.tiny")
+	fileOutput = yarnTiny
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":generating tiny mappings")
+
+		String[] args = [
+			"enigma",
+			mappingsDir.getAbsolutePath(),
+			"tiny:intermediary:named",
+			yarnTiny.getAbsolutePath()
+		]
+
+		new ConvertMappingsCommand().run(args)
+	}
+}
+
+task mergeTiny(dependsOn: ["buildYarnTiny", "invertIntermediary"], type: FileOutput) {
+	group = buildMappingGroup
+	def yarnTinyInput = buildYarnTiny.fileOutput
+	def intermediaryTinyInput = invertIntermediary.fileOutput
+
+	def unorderedResultMappings = new File(tempDir, "mappings-unordered.tiny")
+	def resultMappings = new File(tempDir, "mappings.tiny")
+	outputs.file(resultMappings)
+	fileOutput = resultMappings
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":merging yarn and intermediary")
+		String[] args = [
+			intermediaryTinyInput.getAbsolutePath(),
+			yarnTinyInput.getAbsolutePath(),
+			unorderedResultMappings.getAbsolutePath(),
+			"intermediary",
+			"official"
+		]
+
+		new CommandMergeTiny().run(args)
+
+		logger.lifecycle(":reordering merged intermediary")
+		String[] args2 = [
+			unorderedResultMappings.getAbsolutePath(),
+			resultMappings.getAbsolutePath(),
+			"official", "intermediary", "named"
+		]
+
+		new CommandReorderTiny().run(args2)
+	}
+}
+
+task tinyJar(type: Jar, dependsOn: "mergeTiny") {
+	group = buildMappingGroup
+	outputs.upToDateWhen {false}
+	archiveName = "yarn-${yarnVersion}.jar"
+	destinationDir(file("build/libs"))
+	classifier = ""
+	from (mergeTiny.fileOutput) {
+		rename { "mappings/mappings.tiny" }
+	}
+}
+
+task compressTiny(dependsOn: ["tinyJar", "mergeTiny"], type: FileOutput){
+	group = buildMappingGroup
+	def outputFile = new File(libs, "yarn-tiny-${yarnVersion}.gz")
+	outputs.file(outputFile)
+	fileOutput = outputFile
+
+	def inputFile = mergeTiny.fileOutput
+
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":compressing tiny mappings")
+
+		def buffer = new byte[1024]
+		def fileOutputStream = new FileOutputStream(outputFile)
+		def outputStream = new GZIPOutputStream(fileOutputStream)
+		def fileInputStream = new FileInputStream(inputFile)
+
+		def length
+		while ((length = fileInputStream.read(buffer)) > 0) {
+			outputStream.write(buffer, 0, length)
+		}
+
+		fileInputStream.close()
+		outputStream.finish()
+		outputStream.close()
+	}
+}
+
+clean.doFirst {
+	delete tempDir, cacheFilesStarMade
+}
+
+tasks.build.dependsOn "compressTiny"
+tasks.build.dependsOn "tinyJar"
+
+task mapYarnJar(dependsOn: ["compressTiny", "mapIntermediaryJar"]) {
+	group = mapJarGroup
+	inputs.files downloadStarMadeLibs.outputs.files.files
+	outputs.file(yarnJar)
+
+	//Force the task to always run
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":mapping starmade to yarn")
+
+		def tinyInput = new File("build/libs/yarn-tiny-${yarnVersion}.gz")
+		mapJar(yarnJar, intermediaryJar, tinyInput, libraries, "intermediary", "named")
+	}
+}
+
+task exportMappingsOfficial(dependsOn: "downloadIntermediary") {
+	def composeInput = downloadIntermediary.dest
+
+	doLast {
+		logger.lifecycle(":exporting mappings")
+		String[] args = [
+			"tiny",
+			composeInput.getAbsolutePath(),	
+			"enigma",
+			file("mappings/").getAbsolutePath(),
+			"enigma",
+			file("mappings_official/").getAbsolutePath(),
+			"right"
+		]
+
+		new ComposeMappingsCommand().run(args)
+	}
+}
+
+task importMappingsOfficial(dependsOn: "invertIntermediary") {
+	def composeInput = invertIntermediary.fileOutput
+
+	doLast {
+		logger.lifecycle(":importing mappings")
+		String[] args = [
+			"tiny",
+			composeInput.getAbsolutePath(),	
+			"enigma",
+			file("mappings_official/").getAbsolutePath(),
+			"enigma",
+			file("mappings/").getAbsolutePath(),
+			"right"
+		]
+
+		new ComposeMappingsCommand().run(args)
+	}
+}
+
+task buildTinyWithEnum(dependsOn: "mergeTiny", type: FileOutput) {
+	group = buildMappingGroup
+	def noEnum = mergeTiny.fileOutput
+	def namedWithEnum = new File(tempDir, "named-with-enum.tiny")
+	fileOutput = namedWithEnum
+
+	outputs.file(namedWithEnum)
+	outputs.upToDateWhen { false }
+
+	doLast {
+		logger.lifecycle(":seeking auto-mappable fields")
+		String[] argsPropose = [
+			gameJar.getAbsolutePath(), // must use official jar
+			noEnum.getAbsolutePath(),
+			namedWithEnum.getAbsolutePath()
+		]
+
+		new CommandProposeFieldNames().run(argsPropose)
+	}
+}
+
+task mapNamedJar(dependsOn: [buildTinyWithEnum, mapIntermediaryJar]) {
+	group = mapJarGroup
+	inputs.files downloadStarMadeLibs.outputs.files.files
+	outputs.file(namedJar)
+
+	//Force the task to always run
+	outputs.upToDateWhen {false}
+
+	doLast {
+		logger.lifecycle(":mapping minecraft to named")
+
+		mapJar(namedJar, intermediaryJar, buildTinyWithEnum.fileOutput, libraries, "intermediary", "named")
+	}
+}
+
+publishing {
+	publications {
+		maven(MavenPublication) {
+			groupId 'net.fabricmc'
+			artifactId "yarn"
+			version yarnVersion
+
+			artifact (compressTiny.fileOutput) {
+				classifier "tiny"
+				builtBy compressTiny
+			}
+			artifact (tinyJar)
+		}
+	}
+	repositories {
+		maven {
+			url "http://mavenupload.modmuss50.me/"
+			if (project.hasProperty('mavenPass')) {
+				credentials {
+					username 'buildslave'
+					password project.getProperty('mavenPass')
+				}
+			}
+		}
+	}
+}
+
+
+void mapJar(File output, File input, File mappings, File libraries, String from, String to){
+	if (output.exists()) {
+		output.delete()
+	}
+
+	def remapper = TinyRemapper.newRemapper()
+		.withMappings(TinyUtils.createTinyMappingProvider(mappings.toPath(), from, to))
+		.renameInvalidLocals(true)
+		.rebuildSourceFilenames(true)
+		.build()
+
+	try {
+		def outputConsumer = new OutputConsumerPath(output.toPath())
+		outputConsumer.addNonClassFiles(input.toPath())
+		remapper.readInputs(input.toPath())
+
+		libraries.eachFileRecurse(FileType.FILES) {file ->
+			remapper.readClassPath(file.toPath())
+		}
+		remapper.apply(outputConsumer)
+		outputConsumer.close()
+		remapper.finish()
+	} catch (Exception e) {
+		remapper.finish()
+		throw new RuntimeException("Failed to remap jar", e)
+	}
+}
+
+class FileOutput extends DefaultTask {
+	@OutputFile File fileOutput
+}

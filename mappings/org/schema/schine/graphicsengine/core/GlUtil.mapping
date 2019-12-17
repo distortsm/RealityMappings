@@ -1,0 +1,6 @@
+CLASS org/schema/schine/graphicsengine/core/GlUtil
+	FIELD a matrixMode I
+	FIELD c floatBuffer Ljava/nio/FloatBuffer;
+	METHOD a setMatrixMode (I)V
+	METHOD b begin (I)V
+	METHOD j end ()V

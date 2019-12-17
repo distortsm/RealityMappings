@@ -1,0 +1,4 @@
+CLASS obfuscated/brJ org/schema/schine/graphicsengine/core/GLFrame
+	METHOD a getHeight ()I
+	METHOD b getWidth ()I
+	METHOD f dispose ()V

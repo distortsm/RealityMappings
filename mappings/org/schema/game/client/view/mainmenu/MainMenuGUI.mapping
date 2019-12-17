@@ -1,0 +1,6 @@
+CLASS obfuscated/agv org/schema/game/client/view/mainmenu/MainMenuGUI
+	FIELD a buttons Ljava/util/List;
+	METHOD a getMainMenuController ()Lobfuscated/an;
+	METHOD a isActive ()Z
+	METHOD a addButton (Ljava/lang/String;Lobfuscated/bvG;Ljava/lang/Object;)V
+	METHOD a showDialog (Lobfuscated/agv;)V

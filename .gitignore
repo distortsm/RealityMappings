@@ -1,0 +1,17 @@
+.project
+.settings/
+.vscode/
+
+.gradle/
+*-merged.jar
+*-mapped.jar
+*-intermediary.jar
+*.DS_Store
+build/
+out/
+
+# idea
+.idea/
+*.iml
+*.iws
+*.ipr

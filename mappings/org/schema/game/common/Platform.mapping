@@ -1,0 +1,5 @@
+CLASS obfuscated/T org/schema/game/common/Platform
+	FIELD a identifiers [Ljava/lang/String;
+	FIELD f platform Lobfuscated/T;
+	METHOD a getConfigurationDirectory ()Ljava/io/File;
+	METHOD a getPlatform ()Lobfuscated/T;

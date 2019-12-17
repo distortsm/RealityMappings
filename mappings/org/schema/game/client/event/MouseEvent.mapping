@@ -1,0 +1,12 @@
+CLASS obfuscated/brU org/schema/game/client/event/MouseEvent
+	FIELD a button I
+	FIELD a state Z
+	FIELD b deltaX I
+	FIELD c deltaY I
+	FIELD d x I
+	FIELD e y I
+	FIELD f deltaWheel I
+	METHOD a leftUp ()Z
+	METHOD b leftDown ()Z
+	METHOD c middleDown ()Z
+	METHOD d rightDown ()Z

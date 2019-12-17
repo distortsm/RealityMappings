@@ -1,0 +1,2 @@
+CLASS obfuscated/U org/schema/game/common/PlatformLookup
+	FIELD a values [I

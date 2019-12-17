@@ -1,0 +1,5 @@
+CLASS obfuscated/bzh org/schema/game/client/view/gui/WindowNode
+	FIELD c width F
+	FIELD d height F
+	METHOD a setWidth (F)V
+	METHOD b setHeight (F)V

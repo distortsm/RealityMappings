@@ -1,0 +1,3 @@
+CLASS obfuscated/bwv org/schema/game/client/view/font/FontNode
+	METHOD a setString (Ljava/lang/Object;)V
+	METHOD a stringWidth (Ljava/lang/String;)I

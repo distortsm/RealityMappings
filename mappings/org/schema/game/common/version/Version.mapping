@@ -1,0 +1,10 @@
+CLASS org/schema/game/common/version/Version
+	FIELD a version Ljava/lang/String;
+	FIELD b build Ljava/lang/String;
+	METHOD a loadVersion ()V
+	METHOD a compareTo (Ljava/lang/String;)I
+	METHOD a loadVersion (Ljava/lang/String;)V
+		ARG 0 directory
+	METHOD a equals (Ljava/lang/String;)Z
+	METHOD a compareTo (Ljava/lang/String;Ljava/lang/String;)I
+	METHOD b isDevelopment ()Z

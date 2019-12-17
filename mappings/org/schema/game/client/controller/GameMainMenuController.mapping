@@ -1,0 +1,2 @@
+CLASS obfuscated/an org/schema/game/client/controller/GameMainMenuController
+	METHOD f hasLastPlay ()Z
