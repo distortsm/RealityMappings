@@ -3,6 +3,8 @@
 .vscode/
 
 .gradle/
+.gradle
+.gradle/*
 *-merged.jar
 *-mapped.jar
 *-intermediary.jar
