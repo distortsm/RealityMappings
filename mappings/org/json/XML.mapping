@@ -1,0 +1,7 @@
+CLASS org/json/XML org/json/XML
+	FIELD AMP AMP Ljava/lang/Character;
+	FIELD APOS APOS Ljava/lang/Character;
+	FIELD QUEST QUEST Ljava/lang/Character;
+	FIELD SLASH SLASH Ljava/lang/Character;
+	FIELD field_37523 field_37523 Ljava/lang/Character;
+	FIELD field_37524 field_37524 Ljava/lang/Character;

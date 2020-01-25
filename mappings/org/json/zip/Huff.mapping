@@ -1,0 +1,6 @@
+CLASS org/json/zip/Huff org/json/zip/Huff
+	CLASS class_7283 class_7283
+	FIELD domain domain I
+	FIELD width width I
+	METHOD <init> (I)V
+		ARG 1 i

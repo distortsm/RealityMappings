@@ -1,0 +1,3 @@
+CLASS org/json/CDL org/json/CDL
+	METHOD getValue (Lorg/json/JSONTokener;)Ljava/lang/String;
+		ARG 0 jSONTokener

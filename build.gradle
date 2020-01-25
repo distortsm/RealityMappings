@@ -109,9 +109,9 @@ task downloadVersionsManifest(type: Download) {
 	group = setupGroup
 	inputs.property "date", java.time.LocalDate.now()
 
-	def manifestFile = new File(cacheFilesStarMade, "release_version_manifest.lst")
+	def manifestFile = new File(cacheFilesStarMade, "dev_version_manifest.lst")
 
-	src new URL(baseUrl, "/releasebuildindex")
+	src new URL(baseUrl, "/devbuildindex")
 	dest manifestFile
 	onlyIfModified true
 }
@@ -155,6 +155,7 @@ task downloadWantedVersionManifest(dependsOn: downloadVersionsManifest) {
 		if (manifestVersion.isPresent()) {
 			download {
 				src manifestVersion.get().checksums
+				dest checksumsFile
 				dest checksumsFile
 				onlyIfModified true
 			}
@@ -201,7 +202,7 @@ task downloadStarMadeJars(dependsOn: downloadWantedVersionManifest) {
 
 task downloadIntermediary(type: Download){
 	group = buildMappingGroup
-	def url = "https://github.com/DistortSM/intermediary/raw/master/mappings/${project.starMadeVersion}.tiny"
+	def url = "https://github.com/distortsm/MappingsIntermediary/raw/master/mappings/${project.starMadeVersion}.tiny"
 	src UrlEscapers.urlFragmentEscaper().escape(url)
 	dest new File(cacheFilesStarMade, "${project.starMadeVersion}-intermediary.tiny")
 }
@@ -243,20 +244,20 @@ task downloadStarMadeLibs(dependsOn: downloadWantedVersionManifest) {
 			.each {
 				def library = new File(libraries, it[0].substring(it[0].lastIndexOf("/") + 1))
 				def libraryChecksum = it[2]
-				try {
-					verifyChecksum {
-						src library
-						algorithm "sha1"
-						checksum libraryChecksum
-					}
+			//	try {
+			//		verifyChecksum {
+			//	src library
+			//			algorithm "sha1"
+			//			checksum libraryChecksum
+			//		}
 
-				}
-				catch (GradleException ex) {
-					library.delete()
-				}
+			//	}
+			//	catch (GradleException ex) {
+			//		library.delete()
+			//	}
 			}
 
-		// Downlaod any missing libaries
+		// Download any missing libaries
 		download {
 			src libraryUrls
 			dest libraries

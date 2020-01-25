@@ -1,0 +1,2 @@
+CLASS org/json/JSONArray org/json/JSONArray
+	METHOD length length ()I
