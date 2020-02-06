@@ -109,9 +109,9 @@ task downloadVersionsManifest(type: Download) {
 	group = setupGroup
 	inputs.property "date", java.time.LocalDate.now()
 
-	def manifestFile = new File(cacheFilesStarMade, "dev_version_manifest.lst")
+	def manifestFile = new File(cacheFilesStarMade, "release_version_manifest.lst")
 
-	src new URL(baseUrl, "/devbuildindex")
+	src new URL(baseUrl, "/releasebuildindex")
 	dest manifestFile
 	onlyIfModified true
 }
